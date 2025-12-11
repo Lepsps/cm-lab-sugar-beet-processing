@@ -62,7 +62,7 @@ pip install -r requirements.txt
 В той же папке выполните команду для сборки C++ ядра. Это создаст файл `sugar_core.pyd` (или `.so` на Linux).
 
 ```bash
-python setup.py build_ext --inplace
+python setup.py -q build_ext --inplace
 ```
 > **Важно!** Если во время компиляции возникают ошибки, убедитесь, что C++ компилятор установлен корректно и доступен в системных путях.
 
