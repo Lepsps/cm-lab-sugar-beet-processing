@@ -1,4 +1,9 @@
 import sys
+
+from PyQt5.QtGui import QIcon
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import get_resource_path
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QFormLayout, QCheckBox, 
                              QComboBox, QMessageBox, QProgressBar, QGroupBox, 
@@ -8,8 +13,14 @@ from PyQt5.QtGui import QPalette, QColor, QFont
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# Импорт потока вычислений
-from gui.worker import WorkerThread
+import data.database as db
+from gui.history_window import HistoryWindow
+from gui.help_window import HelpWindow
+
+try:
+    from gui.worker import WorkerThread
+except ImportError:
+    from worker import WorkerThread
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -17,7 +28,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("СППР: Переработка сахарной свеклы")
         self.setGeometry(100, 100, 1150, 800)
         
-        # --- НАСТРОЙКИ ТЕМЫ ПО УМОЛЧАНИЮ ---
+        icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
+        self.setWindowIcon(QIcon(icon_path))
+
+        db.init_db()
+        
         self.dark_mode = True 
         self.bg_color = QColor(40, 40, 40)
         self.text_color = QColor(255, 255, 255)
@@ -25,7 +40,10 @@ class MainWindow(QMainWindow):
         self.input_bg_color = QColor(60, 60, 60)
         
         self.worker = None
-        self.last_results = {} 
+        self.last_results = {}
+        
+        self.resume_state = None      
+        self.last_run_params = None   
         
         self.init_ui()
         self.apply_theme()
@@ -37,14 +55,12 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(20)
         
-        # --- ЛЕВАЯ ПАНЕЛЬ (Настройки) ---
         settings_panel = QWidget()
         settings_layout = QVBoxLayout(settings_panel)
         settings_panel.setFixedWidth(360)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(10)
         
-        # Группы параметров
         grp_gen = QGroupBox("Общие параметры")
         form_gen = QFormLayout()
         self.inp_T = QLineEdit("50") 
@@ -93,7 +109,6 @@ class MainWindow(QMainWindow):
         grp_chem.setLayout(v_chem)
         settings_layout.addWidget(grp_chem)
         
-        # Кнопки
         self.btn_run = QPushButton("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
         self.btn_run.setFixedHeight(50)
         self.btn_run.setCursor(Qt.PointingHandCursor)
@@ -115,7 +130,6 @@ class MainWindow(QMainWindow):
         
         settings_layout.addStretch()
         
-        # Шестеренка
         self.btn_settings = QToolButton()
         self.btn_settings.setText("⚙") 
         self.btn_settings.setFixedSize(40, 40)
@@ -127,13 +141,13 @@ class MainWindow(QMainWindow):
         
         settings_layout.addWidget(self.btn_settings)
         
-        # --- ПРАВАЯ ПАНЕЛЬ (Результаты) ---
         results_panel = QWidget()
         results_layout = QVBoxLayout(results_panel)
         results_layout.setContentsMargins(0, 0, 0, 0)
         
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
+        self.ax = self.figure.add_subplot(111)
         results_layout.addWidget(self.canvas)
         
         self.txt_output = QTextEdit()
@@ -150,17 +164,217 @@ class MainWindow(QMainWindow):
         self.inp_v.setEnabled(is_checked)
         self.inp_beta_max.setEnabled(is_checked)
 
+    def validate_input(self, name, widget, min_val=-float('inf'), max_val=float('inf'), is_int=True):
+        text = widget.text().strip().replace(',', '.')
+        if not text: raise ValueError(f"Неверный формат данных! Поле '{name}' не может быть пустым.")
+        try:
+            val = int(text) if is_int else float(text)
+        except ValueError:
+            type_str = "целое" if is_int else "числовое"
+            raise ValueError(f"Неверный формат данных! Введите {type_str} число в поле '{name}'.")
+        if not (min_val <= val <= max_val):
+            if is_int and min_val == 1 and val <= 0:
+                raise ValueError(f"Неверный формат данных! Введите целое положительное число (минимум 1) в поле '{name}'.")
+            raise ValueError(f"Неверное значение в поле '{name}'!\nДопустимый диапазон: от {min_val} до {max_val}.")
+        return val
+
+    def get_params(self):
+        try:
+            p = {}
+            p['T'] = self.validate_input("Экспериментов (T)", self.inp_T, min_val=1)
+            p['n'] = self.validate_input("Партий (n)", self.inp_n, min_val=1)
+            
+            p['alpha_min'] = self.validate_input("Alpha min", self.inp_alpha_min, 0.0, 1.0, is_int=False)
+            p['alpha_max'] = self.validate_input("Alpha max", self.inp_alpha_max, 0.0, 1.0, is_int=False)
+            if p['alpha_min'] > p['alpha_max']: raise ValueError("Ошибка логики: Alpha min не может быть больше Alpha max.")
+
+            p['beta1'] = self.validate_input("Beta 1", self.inp_beta1, 0.0, 1.0, is_int=False)
+            p['beta2'] = self.validate_input("Beta 2", self.inp_beta2, 0.0, 1.0, is_int=False)
+            if p['beta1'] > p['beta2']: raise ValueError("Ошибка логики: Beta 1 не может быть больше Beta 2.")
+            
+            p['dist_type'] = 'uniform' if self.combo_dist.currentIndex() == 0 else 'concentrated'
+            
+            p['use_ripening'] = self.chk_ripening.isChecked()
+            if p['use_ripening']:
+                p['v'] = self.validate_input("Этапов (v)", self.inp_v, 1, p['n'])
+                p['beta_max'] = self.validate_input("Beta max", self.inp_beta_max, 1.0, float('inf'), is_int=False)
+            else:
+                p['v'], p['beta_max'] = 0, 1.0
+            
+            p['use_inorganic'] = self.chk_chem.isChecked()
+            return p
+        except ValueError as e:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle("Ошибка ввода")
+            msg.setText(str(e))
+            msg.exec_()
+            return None
+
+    def start_experiment(self):
+        params = self.get_params()
+        if not params: return
+        
+        start_idx = 0
+        prev_data = None
+        
+        if self.resume_state and self.last_run_params == params:
+            start_idx, prev_data = self.resume_state
+            if start_idx >= params['T']:
+                start_idx = 0
+                prev_data = None
+        else:
+            self.resume_state = None
+            self.last_run_params = params
+        
+        self.btn_run.hide()
+        self.btn_cancel.show()
+        
+        if start_idx == 0:
+            self.txt_output.clear()
+            self.progress.setValue(0)
+        
+        self.progress.setMaximum(params['T'])
+        self.progress.setFormat("%p%")
+        
+        self.worker = WorkerThread(params, start_index=start_idx, prev_strategies=prev_data)
+        self.worker.progress_updated.connect(self.progress.setValue)
+        self.worker.result_ready.connect(self.display_results)
+        self.worker.error_occurred.connect(self.handle_error)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.paused_state_saved.connect(self.save_state_on_pause)
+        
+        self.worker.start()
+
+    def cancel_experiment(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.requestInterruption()
+            self.btn_cancel.setEnabled(False)
+
+    def save_state_on_pause(self, idx, data):
+        self.resume_state = (idx, data)
+        self.progress.setFormat(f"Пауза ({idx}/{self.last_run_params['T']})")
+
+    def on_worker_finished(self):
+        self.btn_cancel.hide()
+        self.btn_cancel.setEnabled(True)
+        self.btn_run.show()
+        if self.worker and self.worker.isInterruptionRequested():
+            self.btn_run.setText("ПРОДОЛЖИТЬ")
+        else:
+            self.btn_run.setText("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
+
+    def handle_error(self, msg_text):
+        self.btn_cancel.hide()
+        self.btn_cancel.setEnabled(True)
+        self.btn_run.show()
+        self.progress.setValue(0) 
+        self.progress.setFormat("Ошибка")
+        self.resume_state = None
+        self.last_run_params = None
+        self.btn_run.setText("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
+        QMessageBox.critical(self, "Критическая ошибка", msg_text)
+
+    def display_results(self, avg_losses):
+        self.resume_state = None 
+        self.btn_run.setText("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
+        
+        if self.last_run_params:
+            db.add_record(self.last_run_params, avg_losses)
+
+        self.last_results = avg_losses
+        self.plot_results(avg_losses)
+        
+        report = "=== РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА ===\n\n"
+        names_ru = {'greedy': 'Жадная', 'thrifty': 'Бережливая',
+                    'greedy_thrifty': 'Жадно-бережливая',
+                    'thrifty_greedy': 'Бережливо-жадная', 'median': 'Медианная'}
+        if avg_losses:
+            sorted_res = sorted(avg_losses.items(), key=lambda item: item[1])
+            for name, val in sorted_res:
+                report += f"{names_ru[name]:<20} : {val:.2f}% потерь\n"
+            best_strat = sorted_res[0][0]
+            report += f"\n🏆 РЕКОМЕНДУЕМАЯ СТРАТЕГИЯ: {names_ru[best_strat].upper()}"
+        else:
+            report += "Нет данных для отображения."
+        self.txt_output.setText(report)
+
+    def plot_results(self, avg_losses):
+        self.ax.clear()
+        bg_hex, fg_hex = self.bg_color.name(), self.text_color.name()
+        self.figure.patch.set_facecolor(bg_hex)
+        self.ax.set_facecolor(bg_hex)
+        labels = ['Жадная', 'Бережл.', 'Ж-Б', 'Б-Ж', 'Медиана']
+        keys = ['greedy', 'thrifty', 'greedy_thrifty', 'thrifty_greedy', 'median']
+        values = [avg_losses.get(k, 0) for k in keys]
+        bar_colors = ['#808080', '#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#C2C2F0']
+        bars = self.ax.bar(labels, values, color=bar_colors)
+        self.ax.tick_params(axis='x', colors=fg_hex)
+        self.ax.tick_params(axis='y', colors=fg_hex)
+        for spine in self.ax.spines.values(): spine.set_color(fg_hex)
+        self.ax.set_ylabel('Потери (%)', color=fg_hex)
+        self.ax.set_title('Сравнение эффективности стратегий', color=fg_hex)
+        self.ax.grid(axis='y', linestyle='--', alpha=0.3, color=fg_hex)
+        for bar in bars:
+            height = bar.get_height()
+            self.ax.annotate(f'{height:.2f}%', 
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha='center', va='bottom', color=fg_hex, fontweight='bold')
+        self.canvas.draw()
+
     def open_settings_menu(self):
         menu = QMenu(self)
+        
+        action_history = menu.addAction("📜 История запросов")
+        action_history.triggered.connect(self.show_history)
+        
+        action_help = menu.addAction("❓ Помощь")
+        action_help.triggered.connect(self.show_help)
+
+        menu.addSeparator()
+        
         mode_text = "☀ Включить светлую тему" if self.dark_mode else "🌙 Включить темную тему"
         action_mode = menu.addAction(mode_text)
         action_mode.triggered.connect(self.toggle_dark_mode)
+        
         menu.addSeparator()
+        
         action_accent = menu.addAction("🎨 Цвет кнопок")
         action_accent.triggered.connect(self.choose_accent_color)
         action_bg = menu.addAction("🖼️ Цвет фона")
         action_bg.triggered.connect(self.choose_bg_color)
+        
         menu.exec_(self.btn_settings.mapToGlobal(self.btn_settings.rect().topRight()))
+
+    def show_history(self):
+        self.history_window = HistoryWindow(self, self.dark_mode)
+        self.history_window.experiment_selected.connect(self.load_from_history)
+        self.history_window.exec_()
+
+    def load_from_history(self, params, results):
+        """Заполнение интерфейса данными из истории."""
+        self.inp_T.setText(str(params.get('T')))
+        self.inp_n.setText(str(params.get('n')))
+        self.inp_alpha_min.setText(str(params.get('alpha_min')))
+        self.inp_alpha_max.setText(str(params.get('alpha_max')))
+        self.inp_beta1.setText(str(params.get('beta1')))
+        self.inp_beta2.setText(str(params.get('beta2')))
+        
+        idx = 0 if params.get('dist_type') == 'uniform' else 1
+        self.combo_dist.setCurrentIndex(idx)
+        
+        self.chk_ripening.setChecked(params.get('use_ripening', False))
+        if params.get('use_ripening'):
+            self.inp_v.setText(str(params.get('v')))
+            self.inp_beta_max.setText(str(params.get('beta_max')))
+            
+        self.chk_chem.setChecked(params.get('use_inorganic', False))
+        
+        self.last_run_params = params 
+        self.progress.setValue(100)
+        self.progress.setFormat("Из истории")
+        self.display_results(results)
 
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
@@ -204,6 +418,8 @@ class MainWindow(QMainWindow):
 
         bg, fg, inp, acc = self.bg_color.name(), self.text_color.name(), self.input_bg_color.name(), self.accent_color.name()
         btn_fg = "white" if self.accent_color.lightness() < 180 else "black"
+        msg_bg = inp if self.dark_mode else "white"
+        msg_fg = fg
         
         style = f"""
             QMainWindow {{ background-color: {bg}; }}
@@ -222,141 +438,20 @@ class MainWindow(QMainWindow):
             QToolButton:hover {{ background-color: rgba(128, 128, 128, 0.3); }}
             QMenu {{ background-color: {inp}; color: {fg}; border: 1px solid {acc}; }}
             QMenu::item:selected {{ background-color: {acc}; color: {btn_fg}; }}
+            QMessageBox {{ background-color: {msg_bg}; }}
+            QMessageBox QLabel {{ color: {msg_fg}; }}
         """
         self.setStyleSheet(style)
         self.btn_cancel.setStyleSheet(f"background-color: #D32F2F; color: white; border-radius: 6px; font-weight: bold;")
-        self.plot_results(self.last_results)
-
-    def validate_input(self, name, widget, min_val=-float('inf'), max_val=float('inf'), is_int=True):
-        """Хелпер для детальной проверки полей ввода."""
-        text = widget.text().strip().replace(',', '.') # Заменяем запятые на точки
-        if not text:
-            raise ValueError(f"Поле '{name}' не может быть пустым.")
-        try:
-            val = int(text) if is_int else float(text)
-            if not (min_val <= val <= max_val):
-                raise ValueError(f"Значение '{name}' должно быть в диапазоне [{min_val}, {max_val}].")
-            return val
-        except (ValueError, TypeError):
-            raise ValueError(f"Некорректное число в поле '{name}'. Введено: '{text}'")
-
-    def get_params(self):
-        """Сбор и детальная валидация всех данных с формы."""
-        try:
-            p = {}
-            p['T'] = self.validate_input("Экспериментов (T)", self.inp_T, min_val=1)
-            p['n'] = self.validate_input("Партий (n)", self.inp_n, min_val=1)
-            
-            p['alpha_min'] = self.validate_input("Alpha min", self.inp_alpha_min, 0.0, 1.0, is_int=False)
-            p['alpha_max'] = self.validate_input("Alpha max", self.inp_alpha_max, 0.0, 1.0, is_int=False)
-            if p['alpha_min'] > p['alpha_max']: raise ValueError("Alpha min не может быть больше Alpha max.")
-
-            p['beta1'] = self.validate_input("Beta 1", self.inp_beta1, 0.0, 1.0, is_int=False)
-            p['beta2'] = self.validate_input("Beta 2", self.inp_beta2, 0.0, 1.0, is_int=False)
-            if p['beta1'] > p['beta2']: raise ValueError("Beta 1 не может быть больше Beta 2.")
-            
-            p['dist_type'] = 'uniform' if self.combo_dist.currentIndex() == 0 else 'concentrated'
-            
-            p['use_ripening'] = self.chk_ripening.isChecked()
-            if p['use_ripening']:
-                p['v'] = self.validate_input("Этапов (v)", self.inp_v, 1, p['n'])
-                p['beta_max'] = self.validate_input("Beta max", self.inp_beta_max, 1.0, float('inf'), is_int=False)
-            else:
-                p['v'], p['beta_max'] = 0, 1.0
-            
-            p['use_inorganic'] = self.chk_chem.isChecked()
-            return p
-        except ValueError as e:
-            QMessageBox.critical(self, "Ошибка ввода", str(e))
-            return None
-
-    def start_experiment(self):
-        params = self.get_params()
-        if not params: return
         
-        self.btn_run.hide()
-        self.btn_cancel.show()
-        self.txt_output.clear()
-        self.progress.setMaximum(params['T'])
-        self.progress.setValue(0)
-        self.progress.setFormat("%p%")
-        
-        self.worker = WorkerThread(params)
-        self.worker.progress_updated.connect(self.progress.setValue)
-        self.worker.result_ready.connect(self.display_results)
-        self.worker.error_occurred.connect(self.handle_error)
-        self.worker.finished.connect(self.on_worker_finished)
-        self.worker.start()
-
-    def cancel_experiment(self):
-        if self.worker and self.worker.isRunning():
-            self.worker.requestInterruption()
-            self.txt_output.append("\n... Отменяется, ждем завершения ...")
-            self.btn_cancel.setEnabled(False)
-
-    def on_worker_finished(self):
-        self.btn_cancel.hide()
-        self.btn_cancel.setEnabled(True)
-        self.btn_run.show()
-        if self.worker and self.worker.isInterruptionRequested():
-            self.txt_output.append("\nПроцесс был отменен.")
-            self.progress.setValue(0) 
-            self.progress.setFormat("Отменено")
-
-    def handle_error(self, msg):
-        self.btn_cancel.hide()
-        self.btn_cancel.setEnabled(True)
-        self.btn_run.show()
-        self.progress.setValue(0) 
-        self.progress.setFormat("Ошибка")
-        QMessageBox.critical(self, "Ошибка", msg)
-
-    def display_results(self, avg_losses):
-        self.last_results = avg_losses
-        self.plot_results(avg_losses)
-        
-        report = "=== РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА ===\n\n"
-        names_ru = {'greedy': 'Жадная', 'thrifty': 'Бережливая',
-                    'greedy_thrifty': 'Жадно-бережливая',
-                    'thrifty_greedy': 'Бережливо-жадная', 'median': 'Медианная'}
-        if avg_losses:
-            sorted_res = sorted(avg_losses.items(), key=lambda item: item[1])
-            for name, val in sorted_res:
-                report += f"{names_ru[name]:<20} : {val:.2f}% потерь\n"
-            best_strat = sorted_res[0][0]
-            report += f"\n🏆 РЕКОМЕНДУЕМАЯ СТРАТЕГИЯ: {names_ru[best_strat].upper()}"
+        if self.last_results:
+            self.plot_results(self.last_results)
         else:
-            report += "Нет данных для отображения."
-        self.txt_output.setText(report)
-
-    def plot_results(self, avg_losses):
-        self.figure.clear()
-        ax = self.figure.add_subplot(111)
+            self.figure.patch.set_facecolor(bg)
+            self.ax.set_facecolor(bg)
+            self.canvas.draw()
         
-        bg_hex, fg_hex = self.bg_color.name(), self.text_color.name()
-        
-        self.figure.patch.set_facecolor(bg_hex)
-        ax.set_facecolor(bg_hex)
-        
-        labels = ['Жадная', 'Бережл.', 'Ж-Б', 'Б-Ж', 'Медиана']
-        keys = ['greedy', 'thrifty', 'greedy_thrifty', 'thrifty_greedy', 'median']
-        values = [avg_losses.get(k, 0) for k in keys]
-        
-        bar_colors = ['#808080', '#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#C2C2F0']
-        bars = ax.bar(labels, values, color=bar_colors)
-        
-        ax.tick_params(axis='x', colors=fg_hex)
-        ax.tick_params(axis='y', colors=fg_hex)
-        for spine in ax.spines.values(): spine.set_color(fg_hex)
-        
-        ax.set_ylabel('Потери (%)', color=fg_hex)
-        ax.set_title('Сравнение эффективности стратегий', color=fg_hex)
-        ax.grid(axis='y', linestyle='--', alpha=0.3, color=fg_hex)
-        
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.2f}%', 
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha='center', va='bottom', color=fg_hex, fontweight='bold')
-        self.canvas.draw()
+    def show_help(self):
+        """Открывает окно справки."""
+        self.help_window = HelpWindow(self, self.dark_mode)
+        self.help_window.exec_()

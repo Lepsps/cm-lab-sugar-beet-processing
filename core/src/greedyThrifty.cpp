@@ -9,7 +9,7 @@ double run_greedy_thrifty(pybind11::array_t<double> input_matrix, int v) {
     double total = 0;
 
     for (int j = 0; j < n; j++) {
-        bool use_greedy = (j + 1 < v);
+        bool use_greedy = (j < v);
         int best_row = -1;
         double best_val = use_greedy ? -1.0 : std::numeric_limits<double>::max();
 
