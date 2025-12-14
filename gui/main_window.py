@@ -1,18 +1,15 @@
 import sys
-
-from PyQt5.QtGui import QIcon
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils import get_resource_path
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QFormLayout, QCheckBox, 
                              QComboBox, QMessageBox, QProgressBar, QGroupBox, 
-                             QTextEdit, QApplication, QMenu, QColorDialog, QToolButton)
+                             QTextEdit, QApplication, QMenu, QColorDialog, QToolButton,
+                             QScrollArea)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor, QFont
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
+# --- ИМПОРТЫ МОДУЛЕЙ ---
 import data.database as db
 from gui.history_window import HistoryWindow
 from gui.help_window import HelpWindow
@@ -26,10 +23,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("СППР: Переработка сахарной свеклы")
-        self.setGeometry(100, 100, 1150, 800)
         
-        icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
-        self.setWindowIcon(QIcon(icon_path))
+        # Размер окна
+        self.setGeometry(100, 100, 1200, 800)
+        
+        # Базовый шрифт
+        font = QFont()
+        font.setPointSize(12) 
+        self.setFont(font)
 
         db.init_db()
         
@@ -52,32 +53,50 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(10, 10, 10, 10) 
+        main_layout.setSpacing(15) 
         
-        settings_panel = QWidget()
-        settings_layout = QVBoxLayout(settings_panel)
-        settings_panel.setFixedWidth(360)
-        settings_layout.setContentsMargins(0, 0, 0, 0)
-        settings_layout.setSpacing(10)
+        # --- ЛЕВАЯ ПАНЕЛЬ ---
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFixedWidth(500) 
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
         
+        settings_content = QWidget()
+        settings_layout = QVBoxLayout(settings_content)
+        settings_layout.setContentsMargins(5, 0, 15, 0)
+        settings_layout.setSpacing(15)
+        
+        # 1. Общие параметры
         grp_gen = QGroupBox("Общие параметры")
         form_gen = QFormLayout()
+        form_gen.setVerticalSpacing(10)
+        
         self.inp_T = QLineEdit("50") 
         self.inp_n = QLineEdit("15")
+        self.inp_T.setMinimumHeight(38)
+        self.inp_n.setMinimumHeight(38)
+
         form_gen.addRow("Экспериментов (T):", self.inp_T)
         form_gen.addRow("Партий (n):", self.inp_n)
         grp_gen.setLayout(form_gen)
         settings_layout.addWidget(grp_gen)
         
+        # 2. Параметры сырья
         grp_params = QGroupBox("Параметры сырья")
         form_params = QFormLayout()
+        form_params.setVerticalSpacing(10)
+
         self.inp_alpha_min = QLineEdit("0.12")
         self.inp_alpha_max = QLineEdit("0.22")
         self.inp_beta1 = QLineEdit("0.86") 
         self.inp_beta2 = QLineEdit("0.99")
         self.combo_dist = QComboBox()
         self.combo_dist.addItems(["Равномерно", "Концентрировано"])
+        
+        for w in [self.inp_alpha_min, self.inp_alpha_max, self.inp_beta1, self.inp_beta2, self.combo_dist]:
+            w.setMinimumHeight(38) 
+
         form_params.addRow("Alpha min:", self.inp_alpha_min)
         form_params.addRow("Alpha max:", self.inp_alpha_max)
         form_params.addRow("Beta 1:", self.inp_beta1)
@@ -86,15 +105,23 @@ class MainWindow(QMainWindow):
         grp_params.setLayout(form_params)
         settings_layout.addWidget(grp_params)
         
+        # 3. Дозаривание
         grp_rip = QGroupBox("Дозаривание")
         v_rip = QVBoxLayout()
         self.chk_ripening = QCheckBox("Учитывать дозаривание")
+        self.chk_ripening.setStyleSheet("QCheckBox::indicator { width: 24px; height: 24px; }")
+        
         self.chk_ripening.stateChanged.connect(self.toggle_ripening)
+        
         form_rip = QFormLayout()
+        form_rip.setVerticalSpacing(10)
         self.inp_v = QLineEdit("7")
         self.inp_beta_max = QLineEdit("1.07")
         self.inp_v.setEnabled(False)
         self.inp_beta_max.setEnabled(False)
+        self.inp_v.setMinimumHeight(38)
+        self.inp_beta_max.setMinimumHeight(38)
+
         form_rip.addRow("Этапов (v):", self.inp_v)
         form_rip.addRow("Beta max:", self.inp_beta_max)
         v_rip.addWidget(self.chk_ripening)
@@ -102,25 +129,29 @@ class MainWindow(QMainWindow):
         grp_rip.setLayout(v_rip)
         settings_layout.addWidget(grp_rip)
         
+        # 4. Химия
         grp_chem = QGroupBox("Химия")
         v_chem = QVBoxLayout()
         self.chk_chem = QCheckBox("Учитывать влияние (потери)")
+        self.chk_chem.setStyleSheet("QCheckBox::indicator { width: 24px; height: 24px; }")
         v_chem.addWidget(self.chk_chem)
         grp_chem.setLayout(v_chem)
         settings_layout.addWidget(grp_chem)
         
+        # Кнопки управления
         self.btn_run = QPushButton("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
-        self.btn_run.setFixedHeight(50)
+        self.btn_run.setFixedHeight(55) 
         self.btn_run.setCursor(Qt.PointingHandCursor)
         self.btn_run.clicked.connect(self.start_experiment)
         
         self.btn_cancel = QPushButton("ОТМЕНИТЬ")
-        self.btn_cancel.setFixedHeight(40)
+        self.btn_cancel.setFixedHeight(45) 
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.clicked.connect(self.cancel_experiment)
         self.btn_cancel.hide()
         
         self.progress = QProgressBar()
+        self.progress.setFixedHeight(30)
         self.progress.setTextVisible(True)
         self.progress.setAlignment(Qt.AlignCenter)
         
@@ -130,17 +161,21 @@ class MainWindow(QMainWindow):
         
         settings_layout.addStretch()
         
+        # Кнопка настроек
         self.btn_settings = QToolButton()
         self.btn_settings.setText("⚙") 
-        self.btn_settings.setFixedSize(40, 40)
-        font = QFont(); font.setPointSize(20)
-        self.btn_settings.setFont(font)
+        self.btn_settings.setFixedSize(55, 55)
+        font_gear = QFont(); font_gear.setPointSize(26)
+        self.btn_settings.setFont(font_gear)
         self.btn_settings.setCursor(Qt.PointingHandCursor)
         self.btn_settings.setPopupMode(QToolButton.InstantPopup) 
         self.btn_settings.clicked.connect(self.open_settings_menu)
         
         settings_layout.addWidget(self.btn_settings)
         
+        scroll_area.setWidget(settings_content)
+        
+        # --- ПРАВАЯ ПАНЕЛЬ (РЕЗУЛЬТАТЫ) ---
         results_panel = QWidget()
         results_layout = QVBoxLayout(results_panel)
         results_layout.setContentsMargins(0, 0, 0, 0)
@@ -152,11 +187,11 @@ class MainWindow(QMainWindow):
         
         self.txt_output = QTextEdit()
         self.txt_output.setReadOnly(True)
-        self.txt_output.setMaximumHeight(150)
+        self.txt_output.setMaximumHeight(220)
         self.txt_output.setPlaceholderText("Результаты появятся здесь...")
         results_layout.addWidget(self.txt_output)
         
-        main_layout.addWidget(settings_panel)
+        main_layout.addWidget(scroll_area)
         main_layout.addWidget(results_panel)
 
     def toggle_ripening(self, state):
@@ -164,6 +199,7 @@ class MainWindow(QMainWindow):
         self.inp_v.setEnabled(is_checked)
         self.inp_beta_max.setEnabled(is_checked)
 
+    # --- ВАЛИДАЦИЯ ---
     def validate_input(self, name, widget, min_val=-float('inf'), max_val=float('inf'), is_int=True):
         text = widget.text().strip().replace(',', '.')
         if not text: raise ValueError(f"Неверный формат данных! Поле '{name}' не может быть пустым.")
@@ -183,24 +219,19 @@ class MainWindow(QMainWindow):
             p = {}
             p['T'] = self.validate_input("Экспериментов (T)", self.inp_T, min_val=1)
             p['n'] = self.validate_input("Партий (n)", self.inp_n, min_val=1)
-            
             p['alpha_min'] = self.validate_input("Alpha min", self.inp_alpha_min, 0.0, 1.0, is_int=False)
             p['alpha_max'] = self.validate_input("Alpha max", self.inp_alpha_max, 0.0, 1.0, is_int=False)
             if p['alpha_min'] > p['alpha_max']: raise ValueError("Ошибка логики: Alpha min не может быть больше Alpha max.")
-
             p['beta1'] = self.validate_input("Beta 1", self.inp_beta1, 0.0, 1.0, is_int=False)
             p['beta2'] = self.validate_input("Beta 2", self.inp_beta2, 0.0, 1.0, is_int=False)
             if p['beta1'] > p['beta2']: raise ValueError("Ошибка логики: Beta 1 не может быть больше Beta 2.")
-            
             p['dist_type'] = 'uniform' if self.combo_dist.currentIndex() == 0 else 'concentrated'
-            
             p['use_ripening'] = self.chk_ripening.isChecked()
             if p['use_ripening']:
                 p['v'] = self.validate_input("Этапов (v)", self.inp_v, 1, p['n'])
                 p['beta_max'] = self.validate_input("Beta max", self.inp_beta_max, 1.0, float('inf'), is_int=False)
             else:
                 p['v'], p['beta_max'] = 0, 1.0
-            
             p['use_inorganic'] = self.chk_chem.isChecked()
             return p
         except ValueError as e:
@@ -208,16 +239,17 @@ class MainWindow(QMainWindow):
             msg.setIcon(QMessageBox.Critical)
             msg.setWindowTitle("Ошибка ввода")
             msg.setText(str(e))
+            font = QFont(); font.setPointSize(16)
+            msg.setFont(font)
             msg.exec_()
             return None
 
+    # --- УПРАВЛЕНИЕ ПОТОКОМ ---
     def start_experiment(self):
         params = self.get_params()
         if not params: return
-        
         start_idx = 0
         prev_data = None
-        
         if self.resume_state and self.last_run_params == params:
             start_idx, prev_data = self.resume_state
             if start_idx >= params['T']:
@@ -226,24 +258,19 @@ class MainWindow(QMainWindow):
         else:
             self.resume_state = None
             self.last_run_params = params
-        
         self.btn_run.hide()
         self.btn_cancel.show()
-        
         if start_idx == 0:
             self.txt_output.clear()
             self.progress.setValue(0)
-        
         self.progress.setMaximum(params['T'])
         self.progress.setFormat("%p%")
-        
         self.worker = WorkerThread(params, start_index=start_idx, prev_strategies=prev_data)
         self.worker.progress_updated.connect(self.progress.setValue)
         self.worker.result_ready.connect(self.display_results)
         self.worker.error_occurred.connect(self.handle_error)
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.paused_state_saved.connect(self.save_state_on_pause)
-        
         self.worker.start()
 
     def cancel_experiment(self):
@@ -273,18 +300,20 @@ class MainWindow(QMainWindow):
         self.resume_state = None
         self.last_run_params = None
         self.btn_run.setText("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
-        QMessageBox.critical(self, "Критическая ошибка", msg_text)
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle("Критическая ошибка")
+        msg.setText(msg_text)
+        msg.setFont(QFont("Arial", 16))
+        msg.exec_()
 
     def display_results(self, avg_losses):
         self.resume_state = None 
         self.btn_run.setText("ЗАПУСТИТЬ МОДЕЛИРОВАНИЕ")
-        
         if self.last_run_params:
             db.add_record(self.last_run_params, avg_losses)
-
         self.last_results = avg_losses
         self.plot_results(avg_losses)
-        
         report = "=== РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА ===\n\n"
         names_ru = {'greedy': 'Жадная', 'thrifty': 'Бережливая',
                     'greedy_thrifty': 'Жадно-бережливая',
@@ -299,6 +328,7 @@ class MainWindow(QMainWindow):
             report += "Нет данных для отображения."
         self.txt_output.setText(report)
 
+    # --- ГРАФИКИ (С УВЕЛИЧЕННЫМ ОТСТУПОМ) ---
     def plot_results(self, avg_losses):
         self.ax.clear()
         bg_hex, fg_hex = self.bg_color.name(), self.text_color.name()
@@ -308,43 +338,53 @@ class MainWindow(QMainWindow):
         keys = ['greedy', 'thrifty', 'greedy_thrifty', 'thrifty_greedy', 'median']
         values = [avg_losses.get(k, 0) for k in keys]
         bar_colors = ['#808080', '#FF9999', '#66B2FF', '#99FF99', '#FFCC99', '#C2C2F0']
+        
+        # --- ЛОГИКА УВЕЛИЧЕНИЯ ОТСТУПА СВЕРХУ ---
+        max_val = max(values) if values else 0
+        if max_val > 0:
+            # Устанавливаем верхнюю границу графика на 20% больше максимального значения
+            self.ax.set_ylim(0, max_val * 1.2)
+        else:
+            self.ax.set_ylim(0, 10) # Дефолт
+        # ----------------------------------------
+
         bars = self.ax.bar(labels, values, color=bar_colors)
-        self.ax.tick_params(axis='x', colors=fg_hex)
-        self.ax.tick_params(axis='y', colors=fg_hex)
+        
+        self.ax.tick_params(axis='x', colors=fg_hex, labelsize=12)
+        self.ax.tick_params(axis='y', colors=fg_hex, labelsize=12)
         for spine in self.ax.spines.values(): spine.set_color(fg_hex)
-        self.ax.set_ylabel('Потери (%)', color=fg_hex)
-        self.ax.set_title('Сравнение эффективности стратегий', color=fg_hex)
+        
+        self.ax.set_ylabel('Потери (%)', color=fg_hex, fontsize=14)
+        self.ax.set_title('Сравнение эффективности стратегий', color=fg_hex, fontsize=16, pad=12)
         self.ax.grid(axis='y', linestyle='--', alpha=0.3, color=fg_hex)
+        
         for bar in bars:
             height = bar.get_height()
             self.ax.annotate(f'{height:.2f}%', 
                         xy=(bar.get_x() + bar.get_width() / 2, height),
                         xytext=(0, 3), textcoords="offset points",
-                        ha='center', va='bottom', color=fg_hex, fontweight='bold')
+                        ha='center', va='bottom', color=fg_hex, 
+                        fontweight='bold', fontsize=12)
+        
+        self.figure.tight_layout()
         self.canvas.draw()
 
+    # --- МЕНЮ ---
     def open_settings_menu(self):
         menu = QMenu(self)
-        
         action_history = menu.addAction("📜 История запросов")
         action_history.triggered.connect(self.show_history)
-        
         action_help = menu.addAction("❓ Помощь")
         action_help.triggered.connect(self.show_help)
-
         menu.addSeparator()
-        
         mode_text = "☀ Включить светлую тему" if self.dark_mode else "🌙 Включить темную тему"
         action_mode = menu.addAction(mode_text)
         action_mode.triggered.connect(self.toggle_dark_mode)
-        
         menu.addSeparator()
-        
         action_accent = menu.addAction("🎨 Цвет кнопок")
         action_accent.triggered.connect(self.choose_accent_color)
         action_bg = menu.addAction("🖼️ Цвет фона")
         action_bg.triggered.connect(self.choose_bg_color)
-        
         menu.exec_(self.btn_settings.mapToGlobal(self.btn_settings.rect().topRight()))
 
     def show_history(self):
@@ -352,25 +392,24 @@ class MainWindow(QMainWindow):
         self.history_window.experiment_selected.connect(self.load_from_history)
         self.history_window.exec_()
 
+    def show_help(self):
+        self.help_window = HelpWindow(self, self.dark_mode)
+        self.help_window.exec_()
+
     def load_from_history(self, params, results):
-        """Заполнение интерфейса данными из истории."""
         self.inp_T.setText(str(params.get('T')))
         self.inp_n.setText(str(params.get('n')))
         self.inp_alpha_min.setText(str(params.get('alpha_min')))
         self.inp_alpha_max.setText(str(params.get('alpha_max')))
         self.inp_beta1.setText(str(params.get('beta1')))
         self.inp_beta2.setText(str(params.get('beta2')))
-        
         idx = 0 if params.get('dist_type') == 'uniform' else 1
         self.combo_dist.setCurrentIndex(idx)
-        
         self.chk_ripening.setChecked(params.get('use_ripening', False))
         if params.get('use_ripening'):
             self.inp_v.setText(str(params.get('v')))
             self.inp_beta_max.setText(str(params.get('beta_max')))
-            
         self.chk_chem.setChecked(params.get('use_inorganic', False))
-        
         self.last_run_params = params 
         self.progress.setValue(100)
         self.progress.setFormat("Из истории")
@@ -420,29 +459,87 @@ class MainWindow(QMainWindow):
         btn_fg = "white" if self.accent_color.lightness() < 180 else "black"
         msg_bg = inp if self.dark_mode else "white"
         msg_fg = fg
+        scroll_bg = bg
         
         style = f"""
             QMainWindow {{ background-color: {bg}; }}
-            QGroupBox {{ font-weight: bold; border: 1px solid {acc}; border-radius: 6px; margin-top: 12px; color: {acc};}}
+            
+            QScrollArea {{ border: none; background-color: {scroll_bg}; }}
+            QScrollArea > QWidget > QWidget {{ background-color: {scroll_bg}; }}
+            
+            QGroupBox {{ 
+                font-weight: bold; 
+                font-size: 24px; 
+                border: 2px solid {acc}; 
+                border-radius: 8px; 
+                margin-top: 12px; 
+                color: {acc};
+                padding-top: 15px; 
+            }}
             QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}
-            QLineEdit, QComboBox {{ background-color: {inp}; color: {fg}; border: 1px solid #777; border-radius: 4px; padding: 5px;}}
-            QLineEdit:focus {{ border: 2px solid {acc}; }}
-            QProgressBar {{ border: 1px solid #777; border-radius: 6px; text-align: center; background-color: {inp}; color: {fg};}}
-            QProgressBar::chunk {{ background-color: {acc}; border-radius: 5px; }}
-            QTextEdit {{ background-color: {inp}; color: {fg}; border: 1px solid {acc}; border-radius: 6px; font-size: 13px;}}
-            QPushButton {{ background-color: {acc}; color: {btn_fg}; border-radius: 6px; font-weight: bold; font-size: 14px; border: none;}}
+            
+            QLabel {{ font-size: 21px; }} 
+            
+            QLineEdit, QComboBox {{ 
+                background-color: {inp}; 
+                color: {fg}; 
+                border: 2px solid #777; 
+                border-radius: 6px; 
+                padding: 5px;
+                font-size: 21px; 
+            }}
+            QLineEdit:focus {{ border: 3px solid {acc}; }}
+            QLineEdit:disabled {{ color: #777; border-color: #555; }}
+            
+            QProgressBar {{ 
+                border: 2px solid #777; 
+                border-radius: 8px; 
+                text-align: center; 
+                background-color: {inp}; 
+                color: {fg};
+                font-size: 16px;
+            }}
+            QProgressBar::chunk {{ background-color: {acc}; border-radius: 6px; }}
+            
+            QTextEdit {{ 
+                background-color: {inp}; 
+                color: {fg}; 
+                border: 2px solid {acc}; 
+                border-radius: 8px; 
+                font-size: 21px; 
+            }}
+            
+            QPushButton {{ 
+                background-color: {acc}; 
+                color: {btn_fg}; 
+                border-radius: 8px; 
+                font-weight: bold; 
+                font-size: 18px; 
+                border: none;
+            }}
             QPushButton:hover {{ background-color: {self.accent_color.lighter(110).name()}; }}
             QPushButton:pressed {{ background-color: {self.accent_color.darker(110).name()}; }}
             QPushButton:disabled {{ background-color: #555; color: #888; }}
-            QToolButton {{ background-color: transparent; color: {fg}; border: none; border-radius: 20px;}}
+            
+            QToolButton {{ background-color: transparent; color: {fg}; border: none; border-radius: 25px;}}
             QToolButton:hover {{ background-color: rgba(128, 128, 128, 0.3); }}
-            QMenu {{ background-color: {inp}; color: {fg}; border: 1px solid {acc}; }}
+            
+            QMenu {{ 
+                background-color: {inp}; 
+                color: {fg}; 
+                border: 2px solid {acc}; 
+                font-size: 16px; 
+            }}
+            QMenu::item {{ padding: 8px 25px; }}
             QMenu::item:selected {{ background-color: {acc}; color: {btn_fg}; }}
+            
             QMessageBox {{ background-color: {msg_bg}; }}
-            QMessageBox QLabel {{ color: {msg_fg}; }}
+            QMessageBox QLabel {{ color: {msg_fg}; font-size: 18px; }}
+            QMessageBox QPushButton {{ width: 90px; height: 35px; font-size: 16px; }}
+            QCheckBox {{ font-size: 21px; color: {fg}; spacing: 10px; }} 
         """
         self.setStyleSheet(style)
-        self.btn_cancel.setStyleSheet(f"background-color: #D32F2F; color: white; border-radius: 6px; font-weight: bold;")
+        self.btn_cancel.setStyleSheet(f"background-color: #D32F2F; color: white; border-radius: 8px; font-weight: bold; font-size: 18px;")
         
         if self.last_results:
             self.plot_results(self.last_results)
@@ -450,8 +547,3 @@ class MainWindow(QMainWindow):
             self.figure.patch.set_facecolor(bg)
             self.ax.set_facecolor(bg)
             self.canvas.draw()
-        
-    def show_help(self):
-        """Открывает окно справки."""
-        self.help_window = HelpWindow(self, self.dark_mode)
-        self.help_window.exec_()
