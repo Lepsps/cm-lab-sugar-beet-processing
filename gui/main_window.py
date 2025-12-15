@@ -9,7 +9,6 @@ from PyQt5.QtGui import QPalette, QColor, QFont
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# --- ИМПОРТЫ МОДУЛЕЙ ---
 import data.database as db
 from gui.history_window import HistoryWindow
 from gui.help_window import HelpWindow
@@ -342,11 +341,9 @@ class MainWindow(QMainWindow):
         # --- ЛОГИКА УВЕЛИЧЕНИЯ ОТСТУПА СВЕРХУ ---
         max_val = max(values) if values else 0
         if max_val > 0:
-            # Устанавливаем верхнюю границу графика на 20% больше максимального значения
             self.ax.set_ylim(0, max_val * 1.2)
         else:
-            self.ax.set_ylim(0, 10) # Дефолт
-        # ----------------------------------------
+            self.ax.set_ylim(0, 10)
 
         bars = self.ax.bar(labels, values, color=bar_colors)
         
